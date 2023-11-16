@@ -4,7 +4,7 @@
  * Created Date: 14/11/2023
  * Author: Shun Suzuki
  * -----
- * Last Modified: 15/11/2023
+ * Last Modified: 16/11/2023
  * Modified By: Shun Suzuki (suzuki@hapis.k.u-tokyo.ac.jp)
  * -----
  * Copyright (c) 2023 Shun Suzuki. All rights reserved.
@@ -16,7 +16,7 @@ use pico_sys_dynamic::ps4000::{
     enPS4000Channel_PS4000_CHANNEL_A, enPS4000Channel_PS4000_CHANNEL_B, PS4000_CHANNEL,
 };
 
-use crate::{check_pico_status, range::Range, LIBRARY};
+use crate::{attenuation::Attenuation, check_pico_status, range::Range, LIBRARY};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Channel {
@@ -40,7 +40,7 @@ pub struct ChannelConfig {
     pub(crate) channel: PS4000_CHANNEL,
     pub coupling: PicoCoupling,
     pub range: Range,
-    pub attenuation: i32,
+    pub attenuation: Attenuation,
 }
 
 impl ChannelConfig {
@@ -52,7 +52,7 @@ impl ChannelConfig {
                 self.channel,
                 if self.enable { 1 } else { 0 },
                 self.coupling.into(),
-                self.range.into(),
+                self.range.into_range(self.attenuation)?,
             ));
             Ok(())
         }
@@ -65,7 +65,7 @@ impl ChannelConfig {
             channel,
             coupling: PicoCoupling::DC,
             range: Range::Range5v,
-            attenuation: 1,
+            attenuation: Attenuation::X1,
         }
     }
 }

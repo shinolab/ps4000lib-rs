@@ -5,6 +5,7 @@
 - Only Windows OS is supported.
 - Only PicoScope 4262 is supported.
 - Only Block mode is supported.
+- Only Simple trigger is supported.
 
 # Author
 

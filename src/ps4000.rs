@@ -4,7 +4,7 @@
  * Created Date: 14/11/2023
  * Author: Shun Suzuki
  * -----
- * Last Modified: 15/11/2023
+ * Last Modified: 16/11/2023
  * Modified By: Shun Suzuki (suzuki@hapis.k.u-tokyo.ac.jp)
  * -----
  * Copyright (c) 2023 Shun Suzuki. All rights reserved.
@@ -21,12 +21,11 @@ pub use crate::check_pico_status;
 use pico_common::PicoStatus;
 use pico_sys_dynamic::ps4000::{
     enPS4000Channel_PS4000_CHANNEL_A, enPS4000Channel_PS4000_CHANNEL_B,
-    enPulseWidthType_PW_TYPE_NONE, enRatioMode_RATIO_MODE_NONE, enThresholdDirection,
-    enThresholdDirection_NONE, tTriggerChannelProperties, tTriggerConditions, PS4000Loader,
-    PS4262_MAX_VALUE,
+    enRatioMode_RATIO_MODE_NONE, enThresholdDirection_NONE, PS4000Loader, PS4262_MAX_VALUE,
 };
 
 use crate::{
+    attenuation::Attenuation,
     block_data::BlockData,
     channel::{Channel, ChannelConfig},
     range::Range,
@@ -77,56 +76,47 @@ impl PS4262 {
         Ok(())
     }
 
-    fn set_trigger(
-        &self,
-        channel_properties: &[tTriggerChannelProperties],
-        trigger_conditions: &[tTriggerConditions],
-        directions: &[enThresholdDirection],
-        delay: u32,
-        auto_trigger_ms: i32,
-    ) -> Result<(), PicoStatus> {
-        let directions = {
-            let mut dirs = [enThresholdDirection_NONE; 6];
-            dirs[..directions.len()].copy_from_slice(directions);
-            dirs
-        };
-
+    fn disable_trigger(&self) -> Result<(), PicoStatus> {
         unsafe {
             let library = LIBRARY.get().unwrap();
-
-            check_pico_status!(library.ps4000SetTriggerChannelProperties(
+            check_pico_status!(library.ps4000SetSimpleTrigger(
                 self.handle,
-                channel_properties.as_ptr() as *mut _,
-                channel_properties.len() as i16,
                 0,
-                auto_trigger_ms,
-            ));
-            check_pico_status!(library.ps4000SetTriggerChannelConditions(
-                self.handle,
-                trigger_conditions.as_ptr() as *mut _,
-                trigger_conditions.len() as i16,
-            ));
-
-            check_pico_status!(library.ps4000SetTriggerChannelDirections(
-                self.handle,
-                directions[0],
-                directions[1],
-                directions[2],
-                directions[3],
-                directions[4],
-                directions[5],
-            ));
-
-            check_pico_status!(library.ps4000SetTriggerDelay(self.handle, delay));
-
-            check_pico_status!(library.ps4000SetPulseWidthQualifier(
-                self.handle,
-                std::ptr::null_mut(),
+                Channel::A.into(),
                 0,
                 enThresholdDirection_NONE,
                 0,
+                0
+            ));
+            check_pico_status!(library.ps4000SetSimpleTrigger(
+                self.handle,
                 0,
-                enPulseWidthType_PW_TYPE_NONE,
+                Channel::B.into(),
+                0,
+                enThresholdDirection_NONE,
+                0,
+                0
+            ));
+        }
+        Ok(())
+    }
+
+    fn set_trigger(&self, cond: Trigger) -> Result<(), PicoStatus> {
+        unsafe {
+            let library = LIBRARY.get().unwrap();
+
+            check_pico_status!(library.ps4000SetSimpleTrigger(
+                self.handle,
+                1,
+                cond.channel.into(),
+                Self::convert_mv_to_adc(
+                    cond.value_mv,
+                    self[cond.channel].attenuation,
+                    self[cond.channel].range
+                ),
+                cond.dir.into(),
+                cond.delay,
+                cond.auto_trigger_ms,
             ));
         }
 
@@ -198,7 +188,7 @@ impl PS4262 {
             check_pico_status!(library.ps4000RunBlock(
                 self.handle,
                 no_of_pre_trigger_samples,
-                sample_count,
+                sample_count - no_of_pre_trigger_samples,
                 timebase,
                 1,
                 &mut time_in_disposed_ms as _,
@@ -230,6 +220,7 @@ impl PS4262 {
 
             Ok(BlockData::new(
                 buffer_size,
+                overflow,
                 time_interval_nanoseconds,
                 min_pinned,
                 max_pinned,
@@ -251,7 +242,7 @@ impl PS4262 {
         sample_rate: u32,
     ) -> Result<BlockData, PicoStatus> {
         self.channels.iter_mut().try_for_each(|ch| ch.update())?;
-        self.set_trigger(&[], &[], &[], 0, 0)?;
+        self.disable_trigger()?;
         let timebase = 10000000 / sample_rate - 1;
         self.block_data_handler(sample_count, timebase, 0)
     }
@@ -263,20 +254,19 @@ impl PS4262 {
         cond: Trigger,
     ) -> Result<BlockData, PicoStatus> {
         self.channels.iter_mut().try_for_each(|ch| ch.update())?;
-        let props = cond.get_properties(self[cond.channel].attenuation, self[cond.channel].range);
-        let conditions = cond.get_conditions();
-        let dirs = cond.get_directions();
-        self.set_trigger(&props, &conditions, &dirs, cond.delay, cond.auto_trigger_ms)?;
+        self.set_trigger(cond)?;
         let timebase = 10000000 / sample_rate - 1;
         self.block_data_handler(sample_count, timebase, cond.no_of_pre_trigger_samples)
     }
 
-    pub(crate) fn convert_adc_to_mv(raw: i16, range: Range) -> f64 {
-        (raw as i32 * range.mv()) as f64 / Self::MAX_VALUE as f64
+    pub(crate) fn convert_adc_to_mv(raw: i16, attenuation: Attenuation, range: Range) -> f64 {
+        (raw as i32 * range.mv(attenuation).unwrap()) as f64 / Self::MAX_VALUE as f64
+            * attenuation.value()
     }
 
-    pub(crate) fn convert_mv_to_adc(raw: f64, range: Range) -> i16 {
-        (raw * Self::MAX_VALUE as f64 / range.mv() as f64) as i16
+    pub(crate) fn convert_mv_to_adc(raw: f64, attenuation: Attenuation, range: Range) -> i16 {
+        (raw / attenuation.value() * Self::MAX_VALUE as f64 / range.mv(attenuation).unwrap() as f64)
+            as i16
     }
 }
 

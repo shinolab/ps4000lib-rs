@@ -4,7 +4,7 @@
  * Created Date: 15/11/2023
  * Author: Shun Suzuki
  * -----
- * Last Modified: 15/11/2023
+ * Last Modified: 16/11/2023
  * Modified By: Shun Suzuki (suzuki@hapis.k.u-tokyo.ac.jp)
  * -----
  * Copyright (c) 2023 Shun Suzuki. All rights reserved.
@@ -13,7 +13,7 @@
 
 use pico_sys_dynamic::ps4000::*;
 
-use crate::{Channel, Range, PS4262};
+use crate::Channel;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ThresholdDirection {
@@ -86,11 +86,11 @@ impl From<TriggerState> for TRIGGER_STATE {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Trigger {
     pub(crate) channel: Channel,
-    value_mv: f64,
-    dir: ThresholdDirection,
+    pub(crate) value_mv: f64,
+    pub(crate) dir: ThresholdDirection,
     pub(crate) no_of_pre_trigger_samples: i32,
     pub(crate) delay: u32,
-    pub(crate) auto_trigger_ms: i32,
+    pub(crate) auto_trigger_ms: i16,
 }
 
 impl Trigger {
@@ -115,69 +115,8 @@ impl Trigger {
         self
     }
 
-    pub fn with_auto_trigger_ms(mut self, auto_trigger_ms: i32) -> Self {
+    pub fn with_auto_trigger_ms(mut self, auto_trigger_ms: i16) -> Self {
         self.auto_trigger_ms = auto_trigger_ms;
         self
-    }
-
-    pub(crate) fn get_properties(
-        &self,
-        attenuation: i32,
-        range: Range,
-    ) -> Vec<tTriggerChannelProperties> {
-        let adc = PS4262::convert_mv_to_adc(self.value_mv / attenuation as f64, range);
-        let hysterisis = (256 * 10 / attenuation) as _;
-        vec![
-            tTriggerChannelProperties {
-                thresholdUpper: adc,
-                thresholdUpperHysteresis: hysterisis,
-                thresholdLower: adc,
-                thresholdLowerHysteresis: hysterisis,
-                channel: Channel::A.into(),
-                thresholdMode: ThresholdMode::Level.into(),
-            },
-            tTriggerChannelProperties {
-                thresholdUpper: adc,
-                thresholdUpperHysteresis: hysterisis,
-                thresholdLower: adc,
-                thresholdLowerHysteresis: hysterisis,
-                channel: Channel::B.into(),
-                thresholdMode: ThresholdMode::Level.into(),
-            },
-        ]
-    }
-
-    pub(crate) fn get_conditions(&self) -> Vec<tTriggerConditions> {
-        vec![tTriggerConditions {
-            channelA: if self.channel == Channel::A {
-                TriggerState::True.into()
-            } else {
-                TriggerState::DoNotCare.into()
-            },
-            channelB: if self.channel == Channel::B {
-                TriggerState::True.into()
-            } else {
-                TriggerState::DoNotCare.into()
-            },
-            channelC: TriggerState::DoNotCare.into(),
-            channelD: TriggerState::DoNotCare.into(),
-            external: TriggerState::DoNotCare.into(),
-            aux: TriggerState::DoNotCare.into(),
-            pulseWidthQualifier: TriggerState::DoNotCare.into(),
-        }]
-    }
-
-    pub(crate) fn get_directions(&self) -> Vec<THRESHOLD_DIRECTION> {
-        let ch_a = if self.channel == Channel::A {
-            self.dir.into()
-        } else {
-            ThresholdDirection::None.into()
-        };
-        let ch_b = if self.channel == Channel::B {
-            self.dir.into()
-        } else {
-            ThresholdDirection::None.into()
-        };
-        vec![ch_a, ch_b]
     }
 }
