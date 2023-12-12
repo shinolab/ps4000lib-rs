@@ -14,6 +14,7 @@
 use std::{
     collections::HashMap,
     ops::{Index, IndexMut},
+    thread::JoinHandle,
 };
 
 pub use crate::check_pico_status;
@@ -128,7 +129,7 @@ impl PS4262 {
         buffer_size: u32,
         timebase: u32,
         no_of_pre_trigger_samples: i32,
-    ) -> Result<BlockData, PicoStatus> {
+    ) -> Result<JoinHandle<Result<BlockData, PicoStatus>>, PicoStatus> {
         let mut timebase = timebase;
         let mut buffer_size = buffer_size;
         let sample_count = buffer_size as i32;
@@ -197,42 +198,49 @@ impl PS4262 {
                 std::ptr::null_mut(),
             ));
 
-            loop {
-                let mut ready = 0i16;
-                check_pico_status!(library.ps4000IsReady(self.handle, &mut ready as _));
-                if ready != 0 {
-                    break;
+            let handle = self.handle;
+            let ranges = self
+                .channels
+                .iter()
+                .map(|ch| (ch.channel, ch.range))
+                .collect();
+            let attenuations = self
+                .channels
+                .iter()
+                .map(|ch| (ch.channel, ch.attenuation))
+                .collect();
+            Ok(std::thread::spawn(move || {
+                loop {
+                    let mut ready = 0i16;
+                    check_pico_status!(library.ps4000IsReady(handle, &mut ready as _));
+                    if ready != 0 {
+                        break;
+                    }
                 }
-            }
 
-            check_pico_status!(library.ps4000Stop(self.handle));
+                check_pico_status!(library.ps4000Stop(handle));
 
-            let mut overflow = 0;
-            check_pico_status!(library.ps4000GetValues(
-                self.handle,
-                0,
-                &mut buffer_size as _,
-                1,
-                enRatioMode_RATIO_MODE_NONE as _,
-                0,
-                &mut overflow,
-            ));
+                let mut overflow = 0;
+                check_pico_status!(library.ps4000GetValues(
+                    handle,
+                    0,
+                    &mut buffer_size as _,
+                    1,
+                    enRatioMode_RATIO_MODE_NONE as _,
+                    0,
+                    &mut overflow,
+                ));
 
-            Ok(BlockData::new(
-                buffer_size,
-                overflow,
-                time_interval_nanoseconds,
-                min_pinned,
-                max_pinned,
-                self.channels
-                    .iter()
-                    .map(|ch| (ch.channel, ch.range))
-                    .collect(),
-                self.channels
-                    .iter()
-                    .map(|ch| (ch.channel, ch.attenuation))
-                    .collect(),
-            ))
+                Ok(BlockData::new(
+                    buffer_size,
+                    overflow,
+                    time_interval_nanoseconds,
+                    min_pinned,
+                    max_pinned,
+                    ranges,
+                    attenuations,
+                ))
+            }))
         }
     }
 
@@ -244,7 +252,9 @@ impl PS4262 {
         self.channels.iter().try_for_each(|ch| ch.update())?;
         self.disable_trigger()?;
         let timebase = 10000000 / sample_rate - 1;
-        self.block_data_handler(sample_count, timebase, 0)
+        self.block_data_handler(sample_count, timebase, 0)?
+            .join()
+            .unwrap()
     }
 
     pub fn collect_block_triggered(
@@ -252,11 +262,11 @@ impl PS4262 {
         sample_count: u32,
         sample_rate: u32,
         cond: Trigger,
-    ) -> Result<BlockData, PicoStatus> {
+    ) -> Result<JoinHandle<Result<BlockData, PicoStatus>>, PicoStatus> {
         self.channels.iter().try_for_each(|ch| ch.update())?;
         self.set_trigger(cond)?;
         let timebase = 10000000 / sample_rate - 1;
-        self.block_data_handler(sample_count, timebase, cond.no_of_pre_trigger_samples)
+        Ok(self.block_data_handler(sample_count, timebase, cond.no_of_pre_trigger_samples)?)
     }
 
     pub(crate) fn convert_adc_to_mv(raw: i16, attenuation: Attenuation, range: Range) -> f64 {

@@ -4,7 +4,7 @@
  * Created Date: 14/11/2023
  * Author: Shun Suzuki
  * -----
- * Last Modified: 16/11/2023
+ * Last Modified: 12/12/2023
  * Modified By: Shun Suzuki (suzuki@hapis.k.u-tokyo.ac.jp)
  * -----
  * Copyright (c) 2023 Shun Suzuki. All rights reserved.
@@ -26,6 +26,9 @@ fn main() {
             10_000_000,
             Trigger::new(Channel::A, ThresholdDirection::Rising, 2000.0),
         )
+        .unwrap()
+        .join()
+        .unwrap()
         .unwrap();
 
     println!(
