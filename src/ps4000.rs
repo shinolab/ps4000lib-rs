@@ -4,7 +4,7 @@
  * Created Date: 14/11/2023
  * Author: Shun Suzuki
  * -----
- * Last Modified: 16/11/2023
+ * Last Modified: 12/12/2023
  * Modified By: Shun Suzuki (suzuki@hapis.k.u-tokyo.ac.jp)
  * -----
  * Copyright (c) 2023 Shun Suzuki. All rights reserved.
@@ -124,7 +124,7 @@ impl PS4262 {
     }
 
     fn block_data_handler(
-        &mut self,
+        &self,
         buffer_size: u32,
         timebase: u32,
         no_of_pre_trigger_samples: i32,
@@ -237,23 +237,23 @@ impl PS4262 {
     }
 
     pub fn collect_block_immediate(
-        &mut self,
+        &self,
         sample_count: u32,
         sample_rate: u32,
     ) -> Result<BlockData, PicoStatus> {
-        self.channels.iter_mut().try_for_each(|ch| ch.update())?;
+        self.channels.iter().try_for_each(|ch| ch.update())?;
         self.disable_trigger()?;
         let timebase = 10000000 / sample_rate - 1;
         self.block_data_handler(sample_count, timebase, 0)
     }
 
     pub fn collect_block_triggered(
-        &mut self,
+        &self,
         sample_count: u32,
         sample_rate: u32,
         cond: Trigger,
     ) -> Result<BlockData, PicoStatus> {
-        self.channels.iter_mut().try_for_each(|ch| ch.update())?;
+        self.channels.iter().try_for_each(|ch| ch.update())?;
         self.set_trigger(cond)?;
         let timebase = 10000000 / sample_rate - 1;
         self.block_data_handler(sample_count, timebase, cond.no_of_pre_trigger_samples)
